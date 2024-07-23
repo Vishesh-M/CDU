@@ -1,0 +1,259 @@
+USE [BI_HUB_PRES]
+GO
+
+/****** Object:  View [PRES].[vw_BenefitClaimedFact]    Script Date: 23/07/2024 3:39:07 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+--drop   VIEW [PRES].[vw_BenefitClaimedFact]
+
+CREATE   VIEW [PRES].[vw_BenefitClaimedFact] AS
+
+with claims AS (SELECT 
+concat(c.name,bd.claimtypecode) as ClaimKey,
+concat(c.name,bd.claimtypecode,RANK() over (partition by concat(c.name,bd.claimtypecode) order by bc.BenefitStatusRecorded__c, isnull(bc.cve__InitialDecision__c,'9999-01-01'),bc.EndOfBenefitPeriod__c, bc.name)) as ClaimKeyPay,
+concat(c.name,RANK() over (partition by c.name order by bc.BenefitStatusRecorded__c, isnull(bc.cve__InitialDecision__c,'9999-01-01'),bc.EndOfBenefitPeriod__c, bc.name)) as ClaimKeyAdhoc,
+concat(c.name,RANK() over (partition by c.name order by bc.BenefitStatusRecorded__c, isnull(bc.cve__InitialDecision__c,'9999-01-01'),bc.EndOfBenefitPeriod__c, bc.name)) as ClaimKeyFin,
+bc.id as BenefitClaimedId
+,c.id as CaseId
+,p.id as PolicyId
+,b.id as BenefitId
+,u.id as CaseOwnerId
+,bc.name as BCID
+--,c.name as CaseNumber
+,p.pasId__c AS PolicyPasId
+--,b.pasId__c AS BenefitPasId
+,s.id AS SchemeId
+,p.cve__Product__c AS ProductId
+,pas.Name AS PASClaimId
+,case when b.BenefitType__c IN ('Business Expense','Group Salary Continuance','Income Protection','Involuntary Unemployment STP','Super Contribution','Waiver of Premium') then bc.cve__BenefitAmount__c else 0 end as BenefitAmountIPmonthly
+,case when b.BenefitType__c IN ('Business Expense','Group Salary Continuance','Income Protection','Involuntary Unemployment STP','Super Contribution','Waiver of Premium') then bc.cve__BenefitAmount__c*12 else 0 end as BenefitAmountIPannual
+,case when b.BenefitType__c NOT IN ('Business Expense','Group Salary Continuance','Income Protection','Involuntary Unemployment STP','Super Contribution','Waiver of Premium')  then bc.cve__BenefitAmount__c else 0 end as BenefitAmountLS
+,bc.PartialBenefitAmount__c AS PartialBenefitAmount
+,case when b.BenefitType__c IN ('Business Expense','Group Salary Continuance','Income Protection','Involuntary Unemployment STP','Super Contribution','Waiver of Premium') then bc.cve__BenefitAmount__c*12 else bc.cve__BenefitAmount__c END AS BenefitAmountAnnual
+,b.BenefitType__c AS BenefitType
+,case when b.BenefitType__c IN ('Business Expense','Group Salary Continuance','Income Protection','Involuntary Unemployment STP','Super Contribution','Waiver of Premium') then bc.cve__CoverageAmount__c*12 else bc.cve__CoverageAmount__c END AS BaseSumInsuredAnnual
+,case when bc.BenefitStatusRecorded__c ='Approved' then 'Admitted'
+	when bc.BenefitStatusRecorded__c ='Denied' then 'Declined'
+	when bc.BenefitStatusRecorded__c ='None' and bc.cve__Status__c ='Closed'  then 'Withdrawn'
+	else bc.BenefitStatusRecorded__c end as Outcome
+,bc.EarningsAtPolicyCommencement__c AS EarningsPolicyInception
+,bc.PreDisabilityEarnings__c AS PreClaimEarnings
+,bc.Postdisabilityearnings__c AS PostClaimEarnings
+,CASE WHEN c.BusinessType__c = 'Group' THEN CONCAT(s.[Name], Bd.BenefitTypeGroup) ELSE NULL END AS MLCWproductKey
+,case when bc.WaitingUnits__c like '%Year%' then bc.WaitingPeriod__c  *365
+	when bc.WaitingUnits__c like '%Month%' then bc.WaitingPeriod__c * 30
+	when bc.WaitingUnits__c like '%Week%' then bc.WaitingPeriod__c * 7
+	when bc.WaitingUnits__c like '%Day%' then bc.WaitingPeriod__c 
+	else bc.WaitingPeriod__c end WaitingperiodDays
+--workers compensation This means simply where there was a workers compensation claim at the same time and not necessarily with any interaction with the workers compensation insurer.
+--,CASE WHEN bc.ReopenedReason__c IN ('Assessment of Withdrawn Claim','Unsustained outcome',
+--'Decision Reassessment','Decision overturned','Recurrence') THEN bc.ReopenedDate__c ELSE NULL END AS ReopenedDate
+--,bc.cve__DateOfDisability__c AS ClaimEventDate
+,FORMAT(bc.cve__DateOfDisability__c, 'yyyyMMdd') AS IncurredDateKey
+,bc.cve__DateOfDisability__c AS IncurredDate
+,FORMAT(bc.NotificationDate__c, 'yyyyMMdd') AS NotificationDateKey
+,bc.NotificationDate__c AS NotificationDate
+,CASE WHEN bc.InitialUnderAssessmentDate__c is null THEN FORMAT(assdate.InitialUnderAssessmentDate__c, 'yyyyMMdd') ELSE CASE WHEN bc.InitialUnderAssessmentDate__c > assdate.InitialUnderAssessmentDate__c THEN FORMAT(assdate.InitialUnderAssessmentDate__c, 'yyyyMMdd') ELSE FORMAT(bc.InitialUnderAssessmentDate__c, 'yyyyMMdd') END END AS InitialUnderAssessmentDateKey
+,CASE WHEN bc.InitialUnderAssessmentDate__c is null THEN assdate.InitialUnderAssessmentDate__c ELSE CASE WHEN bc.InitialUnderAssessmentDate__c > assdate.InitialUnderAssessmentDate__c THEN assdate.InitialUnderAssessmentDate__c ELSE bc.InitialUnderAssessmentDate__c END END AS InitialUnderAssessmentDate
+,bc.InitialUnderAssessmentDate__c AS CvInitialUnderAssessmentDate
+,FORMAT(bc.InitialUnderAssessmentDate__c, 'yyyyMMdd') AS CvInitialUnderAssessmentDateKey
+---,CASE WHEN c.BusinessType__c = 'Group' then FORMAT(bc.NotificationDate__c, 'yyyyMMdd') else --replace due to nofitication chnages
+,CASE WHEN c.BusinessType__c = 'xxxGroup' then FORMAT(bc.NotificationDate__c, 'yyyyMMdd') else 
+	CASE WHEN bc.InitialUnderAssessmentDate__c is null THEN FORMAT(assdate.InitialUnderAssessmentDate__c, 'yyyyMMdd') ELSE 
+	CASE WHEN bc.InitialUnderAssessmentDate__c > assdate.InitialUnderAssessmentDate__c THEN FORMAT(assdate.InitialUnderAssessmentDate__c, 'yyyyMMdd')
+	ELSE FORMAT(bc.InitialUnderAssessmentDate__c, 'yyyyMMdd') END END END AS ReceivedDateKey
+--,CASE WHEN c.BusinessType__c = 'Group' then bc.NotificationDate__c ELSE --changed logic
+,CASE WHEN c.BusinessType__c = 'xxxGroup' then bc.NotificationDate__c ELSE 
+	CASE WHEN bc.InitialUnderAssessmentDate__c is null THEN assdate.InitialUnderAssessmentDate__c ELSE
+	CASE WHEN bc.InitialUnderAssessmentDate__c > assdate.InitialUnderAssessmentDate__c THEN assdate.InitialUnderAssessmentDate__c
+	ELSE bc.InitialUnderAssessmentDate__c END END END AS ReceivedDate
+,FORMAT(bc.cve__InitialDecision__c, 'yyyyMMdd') AS DecisionDateKey
+,bc.cve__InitialDecision__c AS DecisionDate
+,bc.Date_Initial_Decision_Communicated__c AS InitialDecisionCommunicatedDate
+,CASE WHEN decdate.InitialDecisionDate is null OR decdate.InitialDecisionDate > bc.cve__InitialDecision__c THEN bc.cve__InitialDecision__c ELSE FORMAT(decdate.InitialDecisionDate ,'yyyyMMdd') END AS InitialDecisionDateKey
+,CASE WHEN decdate.InitialDecisionDate is null OR decdate.InitialDecisionDate > bc.cve__InitialDecision__c THEN bc.cve__InitialDecision__c ELSE decdate.InitialDecisionDate END AS InitialDecisionDate
+,FORMAT(decdate.FinalDecisionDate ,'yyyyMMdd') AS FinalDecisionDateKey
+,decdate.FinalDecisionDate AS FinalDecisionDate
+--,CASE WHEN bc.BenefitStatusRecorded__c ='None' and bc.cve__Status__c ='Closed' THEN FORMAT(bc.cve__InitialDecision__c, 'yyyyMMdd') ELSE NULL END AS WithdrawnDate
+,FORMAT(c.ClaimFormReceivedDate__c, 'yyyyMMdd') AS ClaimFormReceivedDateKey
+,c.ClaimFormReceivedDate__c AS ClaimFormReceivedDate
+--,FORMAT(cont.Birthdate, 'yyyyMMdd') AS CustomerBirthDate
+,FORMAT(bc.BenefitClaimedClosureDate__c, 'yyyyMMdd') AS BenefitClaimClosedDateKey
+,bc.BenefitClaimedClosureDate__c AS BenefitClaimClosedDate
+,FORMAT(c.cve__ClosedDate__c, 'yyyyMMdd') AS CaseClosedDateKey
+,c.cve__ClosedDate__c AS CaseClosedDate
+,FORMAT(bc.ReopenedDate__c, 'yyyyMMdd') AS ClaimReopenedDateKey
+,bc.DateClaimReceived__c AS LicopReceivedDate
+,bc.Date_Initial_Decision_Communicated__c AS LicopInitialDecisionCommunicatedDate
+,FORMAT(bc.DateClaimReceived__c, 'yyyyMMdd') AS LicopReceivedDateKey
+,FORMAT(bc.Date_Initial_Decision_Communicated__c, 'yyyyMMdd') AS LicopInitialDecisionCommunicatedDateKey
+,FORMAT(bc.LastRequirementReceivedDate__c, 'yyyyMMdd') AS LastRequirementReceivedDateKey
+,bc.LastRequirementReceivedDate__c AS LastRequirementReceivedDate
+,CAST(bc.ReopenedDate__c AS DATE) AS ClaimReopenedDate
+,CAST(bc.cve__InitialApprovedDate__c AS DATE) AS InitialApprovedDate
+,CAST(bc.InitialDeniedDate__c AS DATE) AS InitialDeniedDate
+,CAST(bc.CreatedDate AS DATE) AS CreatedDate
+,FORMAT(bc.cve__InitialApprovedDate__c, 'yyyyMMdd') AS InitialApprovedDateKey
+,FORMAT(bc.InitialDeniedDate__c, 'yyyyMMdd') AS InitialDeniedDateKey
+,p.DateJoinedFund__c AS DateJoinedFund
+,bc.EndOfBenefitPeriod__c AS EndOfBenefitPeriodDate
+,CASE 
+	WHEN c.BusinessType__c = 'Group' AND bc.cve__Status__c = 'Under Assessment' THEN DATEDIFF(DAY, bc.NotificationDate__c,GETDATE()) 
+	WHEN c.BusinessType__c <> 'Group' AND bc.cve__Status__c = 'Under Assessment' THEN
+		CASE WHEN bc.InitialUnderAssessmentDate__c is null THEN DATEDIFF(DAY, assdate.InitialUnderAssessmentDate__c,GETDATE()) ELSE DATEDIFF(DAY,bc.InitialUnderAssessmentDate__c,GETDATE()) END
+	ELSE NULL 
+	END AS UndeterminedDuration
+,DATEDIFF(DAY,bc.cve__DateOfDisability__c,bc.NotificationDate__c) AS EventToNotifiedDuration
+,CASE WHEN bc.cve__Status__c NOT IN ('Closed') THEN DATEDIFF(DAY, bc.cve__DateOfDisability__c,GETDATE()) ELSE NULL END AS OpenDuration
+,DATEDIFF(DAY,bc.cve__DateOfDisability__c,bc.BenefitClaimedClosureDate__c) AS ClosedDuration
+,DATEDIFF(DAY,p.DateJoinedFund__c,bc.cve__DateOfDisability__c) AS DateJoinedFundToDateIncurred
+,CAST(bc.LastModifiedDate AS DATE) AS LastModifiedDate
+,bc.DateCoverCommenced__c AS CoverCommencementDate
+,FORMAT(bc.DateCoverCommenced__c, 'yyyyMMdd') AS CoverCommencementDateKey
+,IndexationDate__c AS NextIndexationDate
+,DateOfTerminationOfBenefit__c AS EffectiveClaimClosureDate
+FROM
+[BI_HUB_STG].[STG_SF].[cve__Claim__c] c
+INNER JOIN [BI_HUB_STG].[STG_SF].[cve__BenefitClaimed__c] bc
+on c.id = bc.cve__Claim__c and bc.IsDeleted = 0
+LEFT JOIN [BI_HUB_STG].[STG_SF].[cve__Policy__c] p ON p.id=c.cve__Policy__c and p.IsDeleted = 0
+INNER JOIN [BI_HUB_STG].[STG_SF].[cve__Benefit__c] b ON b.id = bc.cve__Benefit__c and b.IsDeleted = 0
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_BenefitTypeDimension] bd on bd.BenefitId = bc.cve__Benefit__c
+LEFT JOIN BI_HUB_STG.STG_SF.[User] u on u.id = c.OwnerId
+LEFT JOIN BI_HUB_STG.STG_SF.Contact cont ON cont.Id = bc.cve__ClaimantInsured__c	
+LEFT JOIN (
+SELECT bch.ParentId, MIN (CAST (bch.CreatedDate AS DATE)) AS InitialUnderAssessmentDate__c
+FROM bi_hub_stg.[STG_SF].[cve__BenefitClaimed__History] bch WHERE bch.NewValue like 'Under Assessment' and bch.Field ='cve__status__c'
+GROUP BY bch.ParentId
+) assdate ON assdate.parentid = bc.id
+LEFT JOIN (
+SELECT bch.ParentId, MIN (CAST (bch.NewValue AS DATE)) AS InitialDecisionDate, MAX(CAST (bch.NewValue AS DATE)) AS FinalDecisionDate
+FROM bi_hub_stg.[STG_SF].[cve__BenefitClaimed__History] bch WHERE bch.Field ='cve__InitialDecision__c'
+GROUP BY bch.ParentId
+) decdate ON decdate.parentid = bc.id
+left join BI_HUB_STG.[STG_SF].[Scheme__c] s on p.Scheme__c=s.id
+LEFT JOIN BI_HUB_STG.STG_SF.PASClaim__c pas ON pas.Id = bc.PASClaim__c
+WHERE 1=1
+AND c.ClaimType__c IN ('Claim', 'Post Claim')
+AND (bc.ClosedReason__c  NOT IN ('Duplicate Claim in the Administration System','Not a Legitimate Benefit') OR  bc.ClosedReason__c IS NULL)
+-- reversal of notification?
+--AND bc.cve__Status__c NOT IN ('Pending')
+--AND (NOT (bc.ReopenedReason__c = 'Data Update' AND bc.cve__Status__c = 'Under Assessment') OR bc.ReopenedReason__c IS NULL OR bc.cve__Status__c IS NULL)
+--AND b.BenefitType__c NOT IN ('Waiver of Premium', 'Annuity')
+)
+
+,amounts as(
+select *
+,case when outcome = 'Admitted' then isnull(BenefitAmountAnnual,0)END AS AdmitBenefitAmount
+,case when outcome = 'Declined' then isnull(BenefitAmountAnnual,0)END AS DeclineBenefitAmount
+,case when outcome = 'Withdrawn' then isnull(BenefitAmountAnnual,0)END AS WithdrawnBenefitAmount
+,case when outcome NOT IN ('Admitted','Declined','Withdrawn') then isnull(BenefitAmountAnnual,0)END AS PendingBenefitAmount
+,DATEDIFF(DAY,ReceivedDate,DecisionDate) AS DecisionDuration
+from claims
+)
+
+
+select
+a.ClaimKey,
+a.ClaimKeyPay,
+a.ClaimKeyAdhoc,
+a.ClaimKeyFin,
+a.MLCWproductKey,
+a.BenefitClaimedId,
+a.CaseId,
+a.PolicyId,
+a.BenefitId,
+a.CaseOwnerId,
+a.BCID,
+a.PolicyPasId,
+a.SchemeId,
+a.ProductId,
+a.PASClaimId,
+a.BenefitAmountIPmonthly,
+a.BenefitAmountIPannual,
+a.BenefitAmountLS,
+a.PartialBenefitAmount,
+a.BenefitAmountAnnual,
+a.BaseSumInsuredAnnual,
+AdmitBenefitAmount,
+DeclineBenefitAmount,
+WithdrawnBenefitAmount,
+PendingBenefitAmount,
+a.EarningsPolicyInception,
+a.PreClaimEarnings,
+a.PostClaimEarnings,
+a.IncurredDate,
+a.NotificationDate,
+a.InitialUnderAssessmentDate,
+a.CvInitialUnderAssessmentDate,
+a.ReceivedDate,
+a.DecisionDate,
+a.InitialDecisionDate,
+a.FinalDecisionDate,
+a.ClaimFormReceivedDate,
+a.BenefitClaimClosedDate,
+a.CaseClosedDate,
+a.ClaimReopenedDate,
+a.LicopReceivedDate,
+a.LicopInitialDecisionCommunicatedDate,
+a.LastRequirementReceivedDate,
+a.InitialApprovedDate,
+a.InitialDeniedDate,
+DATEADD (DD, a.WaitingperiodDays,a.IncurredDate) AS LiabilityDate,
+CASE WHEN a.BenefitType = 'Life' then a.NotificationDate else a.ReceivedDate END AS NewDate,
+a.EffectiveClaimClosureDate,
+a.CreatedDate,
+a.LastModifiedDate,
+a.DateJoinedFund,
+a.EndOfBenefitPeriodDate,
+a.CoverCommencementDate,
+a.NextIndexationDate,
+a.IncurredDateKey,
+a.NotificationDateKey,
+a.InitialUnderAssessmentDateKey,
+a.ReceivedDateKey,
+a.DecisionDateKey,
+a.InitialDecisionDateKey,
+a.FinalDecisionDateKey,
+a.ClaimFormReceivedDateKey,
+a.BenefitClaimClosedDateKey,
+a.CaseClosedDateKey,
+a.ClaimReopenedDateKey,
+a.LicopReceivedDateKey,
+a.LicopInitialDecisionCommunicatedDateKey,
+a.LastRequirementReceivedDateKey,
+a.InitialApprovedDateKey,
+a.InitialDeniedDateKey,
+a.CvInitialUnderAssessmentDateKey,
+a.CoverCommencementDateKey,
+a.UndeterminedDuration,
+db.months_approx AS UndeterminedMonths,
+a.EventToNotifiedDuration,
+db1.months_approx AS EventToNotifiedMonths,
+a.DecisionDuration,
+db2.months_approx AS DecisionMonths,
+a.OpenDuration,
+db3.months_approx AS OpenMonths,
+a.ClosedDuration,
+db4.months_approx AS ClosedMonths,
+a.DateJoinedFundToDateIncurred,
+db5.months_approx AS DateJoinedFundToDateIncurredMonths
+ from amounts a 
+ left join [DLV_RPT].[REF].[DurationBands] db on db.days = a.UndeterminedDuration
+ left join [DLV_RPT].[REF].[DurationBands] db1 on db1.days = a.EventToNotifiedDuration
+ left join [DLV_RPT].[REF].[DurationBands] db2 on db2.days = a.DecisionDuration
+ left join [DLV_RPT].[REF].[DurationBands] db3 on db3.days = a.OpenDuration
+ left join [DLV_RPT].[REF].[DurationBands] db4 on db4.days = a.ClosedDuration
+ left join [DLV_RPT].[REF].[DurationBands] db5 on db5.days = a.DateJoinedFundToDateIncurred
+
+
+
+
+GO
+
+
