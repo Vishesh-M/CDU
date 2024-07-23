@@ -1,0 +1,173 @@
+USE [BI_HUB_PRES]
+GO
+
+/****** Object:  View [PRES].[vw_sem_ClaimFact]    Script Date: 23/07/2024 3:40:38 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER OFF
+GO
+
+
+CREATE   VIEW [PRES].[vw_sem_ClaimFact] AS
+WITH claims AS (
+select
+concat(cd.CaseNumber,bd.claimtypecode) as ClaimKey,
+concat(cd.CaseNumber,bd.claimtypecode,1) as ClaimKeyPay,
+concat(cd.CaseNumber,bd.claimtypecode,1) as  ClaimKeyAdhoc,
+concat(cd.CaseNumber,bd.claimtypecode,1) as ClaimKeyFin
+,bf.BenefitClaimedId
+,bf.[CaseId]
+,[PolicyId]
+,bf.[CaseOwnerId]
+,[PolicyPasId]
+,[ProductId]
+,[SchemeId]
+,bf.PASClaimId
+,cd.CaseNumber
+,bd.ClaimType
+,cd.CaseStatus
+,IncurredDateKey
+,NotificationDateKey
+,InitialUnderAssessmentDateKey
+,ReceivedDateKey
+,DecisionDateKey
+,ClaimFormReceivedDateKey
+,BenefitClaimClosedDateKey
+,CaseClosedDateKey
+,ClaimReopenedDateKey
+,IncurredDate
+,NotificationDate
+,InitialUnderAssessmentDate
+,ReceivedDate
+,InitialDecisionDate
+,FinalDecisionDate
+,DecisionDate
+,ClaimFormReceivedDate
+,BenefitClaimClosedDate
+,CaseClosedDate
+,ClaimReopenedDate
+,DateJoinedFund
+,[BenefitAmountIPmonthly]
+,[BenefitAmountIPannual]
+,[BenefitAmountLS]
+,[PartialBenefitAmount]
+,[BenefitAmountAnnual]
+,[BaseSumInsuredAnnual]
+,[AdmitBenefitAmount]
+,[DeclineBenefitAmount]
+,[WithdrawnBenefitAmount]
+,[PendingBenefitAmount]
+,bcd.Outcome
+FROM [BI_HUB_PRES].[PRES].[vw_BenefitClaimedFact] bf
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_BenefitClaimedDimension] bcd on bcd.BenefitClaimedId = bf.BenefitClaimedId
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_CaseDimension] cd on bf.CaseId = cd.CaseId
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_BenefitTypeDimension] bd on bd.BenefitId = bf.BenefitId
+)
+
+,benefitamount as(
+SELECT
+ClaimKey
+,sum(case when Outcome = 'Admitted' then (isnull(AdmitBenefitAmount,0))END) AS AdmitBenefitAmount
+--,sum(case when CaseOutcome = 'Declined' then (isnull(BenefitAmountIPannual,0)+ isnull(BenefitAmountLS,0)) END) AS DeclinedAmount
+,sum(case when Outcome = 'Declined' then (isnull(DeclineBenefitAmount,0))END) AS DeclinedBenefitAmount
+,sum(case when Outcome = 'Withdrawn' then (isnull(WithdrawnBenefitAmount,0))END) AS WithdrawnBenefitAmount
+,sum(case when Outcome NOT IN ('Admitted','Declined','Withdrawn') then (isnull(PendingBenefitAmount,0))END) AS PendingBenefitAmount
+from claims
+group by 
+ClaimKey
+)
+
+,final AS(
+select 
+claims.CaseNumber
+,claims.Claimkey
+,ClaimKeyPay
+,ClaimKeyAdhoc
+,ClaimKeyFin
+,CaseId
+,PolicyId
+,ProductId
+,CaseOwnerId
+,PolicyPasId
+,SchemeId
+,min(PASClaimId) AS PASClaimId
+--,claims.ClaimTypeCode
+--,claims.ClaimType
+--,CaseStatus
+,min(IncurredDateKey) AS ClaimIncurredDateKey
+,min(NotificationDateKey) AS ClaimNotifiedDateKey
+,min(InitialUnderAssessmentDateKey) AS ClaimInitialUnderAssessmentDateKey
+,min(ReceivedDateKey) AS ClaimReceivedDateKey
+,min(DecisionDateKey) AS ClaimInitialDecisionDateKey
+,max(DecisionDateKey) AS ClaimFinalDecisionDateKey
+,min(ClaimReopenedDateKey) AS ClaimReopenedDateKey
+,max(BenefitClaimClosedDateKey) AS ClaimClosedDateKey
+,min(IncurredDate) AS ClaimIncurredDate
+,min(NotificationDate) AS ClaimNotifiedDate
+,min(InitialUnderAssessmentDate) AS ClaimInitialUnderAssessmentDate
+,min(ReceivedDate) AS ClaimReceivedDate
+,min(InitialDecisionDate) AS ClaimInitialDecisionDate
+,max(FinalDecisionDate) AS ClaimFinalDecisionDate
+,max(DecisionDate) AS DecisionDateCV
+,min(ClaimReopenedDate) AS ClaimReopenedDate
+,max(BenefitClaimClosedDate) AS ClaimClosedDate
+,min(DateJoinedFund) AS DateJoinedFund
+,CASE 
+	WHEN benefitamount.PendingBenefitAmount IS NOT NULL THEN DATEDIFF(DAY, min(ReceivedDate),GETDATE()) 
+	ELSE NULL 
+	END AS UndeterminedDuration
+,DATEDIFF(DAY,min(IncurredDate),min(NotificationDate)) AS EventToNotifiedDuration
+,DATEDIFF(DAY,min(ReceivedDate),max(DecisionDate)) AS DecisionDuration -- using the last decision date on the claim for this and date received as strting point
+,CASE WHEN CaseStatus NOT IN ('Closed') THEN DATEDIFF(DAY, min(IncurredDate),GETDATE()) ELSE NULL END AS OpenDuration
+,CASE WHEN CaseStatus NOT IN ('Closed') THEN DATEDIFF(DAY, max(DecisionDate),GETDATE()) ELSE NULL END AS DMOpenDuration
+,DATEDIFF(DAY,min(IncurredDate),max(BenefitClaimClosedDate)) AS ClosedDuration
+,DATEDIFF(DAY,max(DecisionDate),max(BenefitClaimClosedDate)) AS DMClosedDuration
+,DATEDIFF(DAY,min(DateJoinedFund),min(IncurredDate)) AS DateJoinedFundToDateIncurred
+--,sum(isnull(BenefitAmountIPannual,0)+ isnull(BenefitAmountLS,0)) as BenefitAmountCombined
+,sum(BenefitAmountAnnual) AS BenefitAmountAnnual
+,sum(BaseSumInsuredAnnual) AS BaseSumInsuredAnnual
+,benefitamount.AdmitBenefitAmount
+,benefitamount.DeclinedBenefitAmount
+,benefitamount.WithdrawnBenefitAmount
+,benefitamount.PendingBenefitAmount
+
+FROM claims
+LEFT JOIN benefitamount on benefitamount.ClaimKey = claims.ClaimKey
+GROUP BY
+claims.CaseNumber
+,claims.Claimkey
+,ClaimKeyPay
+,ClaimKeyAdhoc
+,ClaimKeyFin
+,CaseId
+,PolicyId
+,ProductId
+,CaseOwnerId
+,PolicyPasId
+,SchemeId
+,CaseStatus
+,benefitamount.AdmitBenefitAmount
+,benefitamount.DeclinedBenefitAmount
+,benefitamount.WithdrawnBenefitAmount
+,benefitamount.PendingBenefitAmount
+)
+
+
+select f.*
+,db.months_approx AS UndeterminedMonths
+,db1.months_approx AS EventToNotifiedMonths
+,db2.months_approx AS DecisionMonths
+,db3.months_approx AS OpenMonths
+,db4.months_approx AS ClosedMonths
+,db5.months_approx AS DateJoinedFundToDateIncurredMonths
+from final f
+left join [DLV_RPT].[REF].[DurationBands] db on db.days = f.UndeterminedDuration
+left join [DLV_RPT].[REF].[DurationBands] db1 on db1.days = f.EventToNotifiedDuration
+left join [DLV_RPT].[REF].[DurationBands] db2 on db2.days = f.DecisionDuration
+left join [DLV_RPT].[REF].[DurationBands] db3 on db3.days = f.OpenDuration
+left join [DLV_RPT].[REF].[DurationBands] db4 on db4.days = f.ClosedDuration
+left join [DLV_RPT].[REF].[DurationBands] db5 on db5.days = f.DateJoinedFundToDateIncurred
+GO
+
+
