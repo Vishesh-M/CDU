@@ -1,0 +1,47 @@
+USE [BI_HUB_PRES]
+GO
+
+/****** Object:  View [PRES].[vw_DiagnosisDimension]    Script Date: 23/07/2024 3:40:08 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER OFF
+GO
+
+
+
+CREATE   VIEW [PRES].[vw_DiagnosisDimension] AS
+
+with diagnosis AS(
+select distinct
+c.id as CaseId
+,d.cve__MedicalCode__c AS PrimaryMedicalCode
+,d.cve__MedicalCodeDescription__c AS PrimaryMedicalCodeDescription
+,d.cve__Classification__c AS MedicalClassification
+,d.cve__MedicalCodeDescription__c AS MedicalCodeDescription
+,substring(d.cve__MedicalCode__c,1,3) as ICD10short
+from
+ [BI_HUB_STG].[STG_SF].[cve__Claim__c] c
+ left join [BI_HUB_STG].[STG_SF].[cve__Journal__c] j on c.Journal__c = j.id 
+ left join 
+	(SELECT RANK() over (partition by d1.cve__Journal__c order by d1.CreatedDate desc) rnk,
+	d1.cve__Journal__c, d1.name as Diagnosis, d1.cve__MedicalCode__c, d1.cve__MedicalCodeDescription__c, d1.cve__Classification__c
+	 FROM [BI_HUB_STG].[STG_SF].[cve__Diagnosis__c] d1
+	 where  d1.cve__Type__c in ( 'Primary','Cause of Death') 
+	 ) d
+on j.id=d.cve__Journal__c and d.rnk=1
+where c.IsDeleted = 0
+)
+
+select
+CaseId
+,PrimaryMedicalCode
+,MedicalClassification
+,MedicalCodeDescription
+,ICD10short
+,Cause_Group_Proper AS ClaimCause
+ from diagnosis d
+left join [DLV_RPT].[REF].[ICD10_Group] icd on icd.ICD_Short = d.ICD10short
+GO
+
+
