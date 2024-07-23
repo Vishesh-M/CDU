@@ -1,0 +1,118 @@
+USE [BI_HUB_PRES]
+GO
+
+/****** Object:  View [PRES].[vw_sem_ClaimDimension]    Script Date: 23/07/2024 3:41:08 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER OFF
+GO
+
+
+CREATE   VIEW [PRES].[vw_sem_ClaimDimension] AS
+
+WITH claims AS (
+select 
+concat(cd.CaseNumber,bd.claimtypecode) as ClaimKey
+,bf.CaseOwnerId
+,cd.CaseNumber
+,bf.CaseId
+,bd.ClaimTypeCode
+,bd.ClaimType
+,bcd.TPDassessmentCriteria
+,bcd.TPDmappingAPRA
+,cd.CaseStatus
+,bf.BenefitAmountIPmonthly
+,bf.BenefitAmountIPannual
+,bf.BenefitAmountLS
+,bf.BenefitAmountAnnual
+,bf.BaseSumInsuredAnnual
+,bcd.Outcome
+,bcd.ReopenedReason
+,bcd.ClosedReason
+,bcd.DisabilityType
+,bcd.EventType
+,bcd.HeritageInd
+,bcd.LawyerName
+,bcd.AdvisorName
+,bcd.UnexpectedCircumstance
+,bcd.UnexpectedCircumstanceApplies
+,cd.BusinessType
+,cd.CurrentCaseCategory
+,cd.PrecedingClaim
+,cd.NotificationType
+,cd.RecoveryStatus
+,cd.RecoverySpecialist
+,bf.ReceivedDate
+FROM [BI_HUB_PRES].[PRES].[vw_BenefitClaimedFact] bf
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_BenefitClaimedDimension] bcd on bcd.BenefitClaimedId = bf.BenefitClaimedId
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_CaseDimension] cd on bf.CaseId = cd.CaseId
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_BenefitTypeDimension] bd on bd.BenefitId = bf.BenefitId
+)
+
+,counts as(
+SELECT
+ClaimKey
+,count(distinct(case when Outcome = 'Admitted' THEN CaseNumber else null end)) as AdmitCount
+,count(distinct(case when Outcome = 'Declined' THEN CaseNumber else null end)) as DeclineCount
+,count(distinct(case when Outcome = 'Withdrawn' THEN CaseNumber else null end)) as WithdrawCount
+,count(distinct(case when Outcome NOT IN ('Admitted','Declined','Withdrawn') AND ReceivedDate IS NOT NULL THEN CaseNumber else null end)) as PendingCount
+from claims
+group by ClaimKey
+
+)
+
+select 
+claims.Claimkey
+,CaseOwnerId
+,CaseId
+,claims.ClaimTypeCode
+,claims.ClaimType
+,CaseStatus
+,max(ReopenedReason) AS ClaimReopenedReason
+,max(ClosedReason) AS ClaimClosedReason
+,min(DisabilityType) AS DisabilityType
+,min(EventType) AS EventType
+,min(HeritageInd) AS HeritageInd
+,LawyerName
+,AdvisorName
+,BusinessType
+,CurrentCaseCategory
+,PrecedingClaim
+,NotificationType
+,RecoveryStatus
+,RecoverySpecialist
+,min(UnexpectedCircumstanceApplies) AS UnexpectedCircumstanceApplies
+,min(TPDassessmentCriteria) AS TPDassessmentCriteria
+,min(TPDmappingAPRA) AS TPDmappingAPRA
+,case when AdmitCount = 1 then 'Admitted'
+    when AdmitCount = 0 and DeclineCount = 1 then 'Declined'
+    when AdmitCount = 0 and DeclineCount = 0 and WithdrawCount = 1 then 'Withdrawn'
+	when AdmitCount = 0 and DeclineCount = 0 and WithdrawCount = 0 and PendingCount = 1 then 'Under Assessment'
+    else 'None' end as ClaimOutcome
+FROM claims
+LEFT JOIN counts on counts.Claimkey = claims.Claimkey
+GROUP BY
+claims.CaseNumber
+,claims.Claimkey
+,CaseId
+,claims.claimtype
+,claimtypecode
+,CaseStatus
+,case when AdmitCount = 1 then 'Admitted'
+    when AdmitCount = 0 and DeclineCount = 1 then 'Declined'
+    when AdmitCount = 0 and DeclineCount = 0 and WithdrawCount = 1 then 'Withdrawn'
+	when AdmitCount = 0 and DeclineCount = 0 and WithdrawCount = 0 and PendingCount = 1 then 'Under Assessment'
+    else 'None' end
+,LawyerName
+,AdvisorName
+,BusinessType
+,CurrentCaseCategory
+,PrecedingClaim
+,NotificationType
+,RecoveryStatus
+,RecoverySpecialist
+,CaseOwnerId
+GO
+
+
