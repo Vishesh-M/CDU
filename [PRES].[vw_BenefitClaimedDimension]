@@ -1,0 +1,118 @@
+USE [BI_HUB_PRES]
+GO
+
+/****** Object:  View [PRES].[vw_BenefitClaimedDimension]    Script Date: 23/07/2024 3:34:56 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+CREATE   VIEW [PRES].[vw_BenefitClaimedDimension] AS
+
+with benefits as (select 
+bc.id as BenefitClaimedId
+,bc.name as BCID
+,bc.cve__Status__c AS BCstatus
+,bc.BenefitStatusRecorded__c AS ClosedReasonCategory
+,bc.ClosedReason__c AS ClosedReason
+,bc.Withdrawn__c AS WithdrawnReason
+,bc.DisabilityType__c AS DisabilityType
+,bc.ReopenedReason__c AS ReopenedReason
+,case when bc.BenefitStatusRecorded__c ='Approved' then 'Admitted'
+	when bc.BenefitStatusRecorded__c ='Denied' then 'Declined'
+	when bc.BenefitStatusRecorded__c ='None' and bc.cve__Status__c ='Closed'  then 'Withdrawn'
+	else bc.BenefitStatusRecorded__c end as Outcome
+,bc.TPDAssessmentCriteria__c AS TPDassessmentCriteria
+,tpd.APRAmapping AS TPDmappingAPRA
+,case when bc.BenefitPeriodPiclist__c ='104 weeks' then '2 Years'
+	when bc.BenefitPeriodPiclist__c ='12 months' then '1 Year'
+	else bc.BenefitPeriodPiclist__c end as BenefitPeriod
+,bc.WaitingPeriod__c AS WaitingPeriod
+,bc.WaitingUnits__c AS WaitingUnits
+,case when bc.WaitingUnits__c like '%Year%' then bc.WaitingPeriod__c  *365
+	when bc.WaitingUnits__c like '%Month%' then bc.WaitingPeriod__c *30
+	when bc.WaitingUnits__c like '%Day%' then bc.WaitingPeriod__c 
+	when bc.WaitingUnits__c like '%week%' then bc.WaitingPeriod__c * 7
+	else bc.WaitingPeriod__c end WaitingperiodDays
+,BenefitInstanceNo__c AS BenefitInstanceNo
+,bc.EventType__c AS EventType
+,case when b.BenefitType__c IN ('Business Expense','Group Salary Continuance','Income Protection','Involuntary Unemployment STP','Super Contribution','Waiver of Premium') then bc.cve__BenefitAmount__c*12 else bc.cve__BenefitAmount__c END AS BenefitAmountAnnual
+,case when bc.ClosedReason__c in ('Duplicate Claim in the Administration System','Not a Legitimate Benefit') then 'Y' else 'N' end as InvalidClaimInd
+,HeritageInd
+,ISNULL(LawyerInvolvement, 'N') AS LawyerInvolvement
+,ISNULL(LawyerName, 'N/A') AS LawyerName
+,ISNULL(AdvisorInvolvement, 'N') AS AdvisorInvolvement
+,ISNULL(AdvisorName, 'N/A') AS AdvisorName
+,bc.UnexpectedCircumstance__c AS UnexpectedCircumstance
+,UnexpectedCircumstanceApplies__c AS UnexpectedCircumstanceApplies
+,CASE
+			WHEN b.Name LIKE 'Super%' THEN 'Y'
+			WHEN b.Name LIKE 'Additional%' THEN 'Y'
+			WHEN b.Name LIKE 'Additional%' THEN 'Y'
+		ELSE 'N'
+		END AS IsAdditionalBenefit
+,ICBECBComments__c AS ICB_ECB_Comments
+FROM
+[BI_HUB_STG].[STG_SF].[cve__Claim__c] c
+INNER JOIN [BI_HUB_STG].[STG_SF].[cve__BenefitClaimed__c] bc
+on c.id = bc.cve__Claim__c and bc.IsDeleted = 0 and c.IsDeleted = 0
+INNER JOIN [BI_HUB_STG].[STG_SF].[cve__Benefit__c] b ON b.id = bc.cve__Benefit__c and b.IsDeleted = 0
+LEFT JOIN [BI_HUB_STG].[STG_SF].[cve__Policy__c] p ON p.id=c.cve__Policy__c and p.IsDeleted = 0
+LEFT JOIN (
+			 SELECT distinct cve__Claim__c, 'Y' as LawyerInvolvement,  
+				STRING_AGG(cve__PartyName__c, ', ') within group (order by cve__PartyName__c) AS LawyerName
+				FROM BI_HUB_STG.STG_SF.[cve__ClaimRelationship__c] cr
+			   WHERE cr.[cve__Type__c] in ('Attorney', 'Customers Legal Representative', 'Customer''s Legal Representative')
+			     AND cr.IsDeleted = 0
+				 GROUP BY cve__Claim__c
+	   ) r on c.Id = r.cve__Claim__c
+LEFT JOIN (
+			 SELECT distinct cve__Claim__c, 'Y' as AdvisorInvolvement,  
+				STRING_AGG(cve__PartyName__c, ', ') within group (order by cve__PartyName__c) AS AdvisorName
+				FROM BI_HUB_STG.STG_SF.[cve__ClaimRelationship__c] cr
+			   WHERE cr.[cve__Type__c] in ('Advisor')
+			     AND cr.IsDeleted = 0
+				 GROUP BY cve__Claim__c
+	   ) r1 on c.Id = r1.cve__Claim__c
+LEFT JOIN [DLV_RPT].[REF].[TPDmapping] tpd on tpd.TPDassessmentCriteria = bc.TPDAssessmentCriteria__c
+LEFT JOIN [BI_HUB_PRES].[PRES].[vw_ProductDimension] pr ON pr.productid = p.cve__Product__c
+WHERE 1=1
+AND c.ClaimType__c IN ('Claim', 'Post Claim')
+AND (bc.ClosedReason__c  NOT IN ('Duplicate Claim in the Administration System','Not a Legitimate Benefit') OR  bc.ClosedReason__c IS NULL)
+)
+
+
+select
+b.BenefitClaimedId
+,b.BCID
+,b.BCstatus
+,b.ClosedReasonCategory
+,b.ClosedReason
+,b.WithdrawnReason
+,b.DisabilityType
+,b.ReopenedReason
+,b.Outcome
+,b.TPDassessmentCriteria
+,b.TPDmappingAPRA
+,b.BenefitPeriod
+,b.WaitingPeriod
+,b.WaitingUnits
+,b.WaitingperiodDays
+,b.BenefitInstanceNo
+,b.EventType
+,b.InvalidClaimInd
+,b.HeritageInd
+,b.LawyerInvolvement
+,b.LawyerName
+,b.AdvisorInvolvement
+,b.AdvisorName
+,b.UnexpectedCircumstance
+,b.UnexpectedCircumstanceApplies
+,b.IsAdditionalBenefit
+,ICB_ECB_Comments
+ from benefits b
+GO
+
+
